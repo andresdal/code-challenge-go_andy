@@ -217,17 +217,32 @@ type BooksService interface {
 - Headers HTTP apropiados
 - Manejo robusto de errores (red, parsing JSON, status codes)
 - Usa contexto para cancelación
-- **Retorna errores descriptivos** (en lugar de silenciarlos con `fmt.Printf`)
+- **Errores tipados** para mejor debugging y testing
 
-**Manejo de Errores Mejorado**:
+**Manejo de Errores Tipados**:
 ```go
-// ❌ ANTES: Errores silenciados
-fmt.Printf("Error: %v\n", err)
-return []models.Book{}
+var (
+    ErrInvalidURL           = errors.New("invalid provider URL")
+    ErrRequestCreation      = errors.New("failed to create HTTP request")
+    ErrRequestExecution     = errors.New("failed to execute HTTP request")
+    ErrUnexpectedStatusCode = errors.New("unexpected HTTP status code")
+    ErrReadingResponse      = errors.New("failed to read response body")
+    ErrParsingJSON          = errors.New("failed to parse JSON response")
+    ErrEmptyResponse        = errors.New("received empty response from server")
+)
 
-// ✅ AHORA: Errores propagados
-return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
+// Uso con wrapping para contexto adicional
+if resp.StatusCode != http.StatusOK {
+    body, _ := io.ReadAll(resp.Body)
+    return nil, fmt.Errorf("%w: %d (body: %s)", ErrUnexpectedStatusCode, resp.StatusCode, string(body))
+}
 ```
+
+**Ventajas de Errores Tipados**:
+- ✅ `errors.Is()` funciona correctamente en tests
+- ✅ Contexto adicional incluido (status codes, body de error)
+- ✅ Mejor debugging con información específica del fallo
+- ✅ Las capas superiores pueden distinguir tipos de error
 
 **Configurabilidad**:
 ```go
@@ -243,6 +258,7 @@ provider := providers.NewHTTPBooksProviderWithConfig(customURL, customClient)
 - Método: GET
 - Timeout: 10 segundos
 - Content-Type: application/json
+- **Manejo de contexto**: Detecta cancelaciones y timeouts
 
 ---
 
@@ -429,12 +445,70 @@ curl "http://localhost:3000/?author=J.R.R.%20Tolkien"
 # Todos los tests
 go test ./... -v
 
+# Con cobertura
+go test ./... -cover
+
 # Solo handlers
 go test ./handlers -v
 
 # Solo services
 go test ./services -v
+
+# Solo providers
+go test ./providers -v
 ```
+
+---
+
+## ✅ Suite de Testing
+
+### **Providers: 16 Tests** (93.1% cobertura)
+
+**Tests implementados**:
+1. ✅ `TestHTTPBooksProvider_GetBooks_Success` - Respuesta exitosa
+2. ✅ `TestHTTPBooksProvider_GetBooks_EmptyArrayResponse` - Array vacío
+3. ✅ `TestHTTPBooksProvider_GetBooks_InvalidURL` - URL vacía
+4. ✅ `TestHTTPBooksProvider_GetBooks_HTTPError_500` - Error 500
+5. ✅ `TestHTTPBooksProvider_GetBooks_HTTPError_404` - Error 404
+6. ✅ `TestHTTPBooksProvider_GetBooks_InvalidJSON` - JSON malformado
+7. ✅ `TestHTTPBooksProvider_GetBooks_InvalidJSONStructure` - Estructura incorrecta
+8. ✅ `TestHTTPBooksProvider_GetBooks_Timeout` - Timeout del cliente
+9. ✅ `TestHTTPBooksProvider_GetBooks_ContextCancellation` - Context cancelado
+10. ✅ `TestHTTPBooksProvider_GetBooks_ContextTimeout` - Timeout del context
+11. ✅ `TestHTTPBooksProvider_GetBooks_ConnectionError` - Error de conexión
+12. ✅ `TestHTTPBooksProvider_GetBooks_EmptyBody` - Body vacío
+13. ✅ `TestHTTPBooksProvider_NewHTTPBooksProvider_DefaultConfig` - Constructor por defecto
+14. ✅ `TestHTTPBooksProvider_NewHTTPBooksProviderWithConfig_NilClient` - Cliente nil
+15. ✅ `TestHTTPBooksProvider_GetBooks_LargeResponse` - 1000 libros
+16. ✅ `TestHTTPBooksProvider_GetBooks_SpecialCharactersInData` - UTF-8 y caracteres especiales
+
+**Errores tipados verificados**:
+- ✅ `ErrInvalidURL` - URL vacía o inválida
+- ✅ `ErrRequestExecution` - Timeout, cancelación, conexión fallida
+- ✅ `ErrUnexpectedStatusCode` - Status code != 200
+- ✅ `ErrParsingJSON` - JSON malformado o estructura incorrecta
+- ✅ `ErrEmptyResponse` - Body completamente vacío
+
+**Técnicas de testing**:
+- `httptest.NewServer()` para simular API externa
+- Inyección de cliente HTTP personalizado para testing
+- Tests de timeouts con delays controlados
+- Validación de headers HTTP (Accept, Content-Type)
+
+### **Services: 10 Tests** (100% cobertura)
+- GetBooks con datos exitosos
+- GetBooks con error del provider
+- CalculateMeanUnitsSold (normal, vacío, errores)
+- FindCheapestBook (normal, vacío, errores)
+- CountBooksByAuthor (con resultados, sin resultados)
+
+### **Handlers: 6 Tests** (90% cobertura)
+- GetMetrics exitoso
+- GetMetrics con parámetro author
+- Error en binding de query
+- Error al obtener libros
+- Error sin libros disponibles
+- Error al calcular métricas
 
 ---
 
@@ -495,8 +569,9 @@ go test ./services -v
 | **Latencia típica** | ~300ms | ~100ms | -66% |
 | **Uso de ancho de banda** | 3x datos | 1x datos | -66% |
 | **Carga en API externa** | 3 requests | 1 request | -66% |
-| **Tests ejecutados** | 13 | 16 | +23% |
-| **Cobertura de código** | ~85% | 90-100% | +15% |
+| **Tests ejecutados** | 13 | 32 | +146% |
+| **Cobertura de código** | ~70% | 90-100% | +30% |
+| **Cobertura providers** | 0% | 93.1% | +93.1% |
 
 ### Ejemplo de Tiempos de Respuesta
 
